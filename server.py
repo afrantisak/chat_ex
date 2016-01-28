@@ -1,49 +1,61 @@
 import eventlet
 from eventlet.green import socket
 
-PORT = 3001
 users = set()
 
 class User(object):
     def __init__(self, connection, address):
         print("Participant joined chat.")
         self.writer = connection.makefile('w')
+        self.reader = connection.makefile('r')
 
-    def write_line(self, text):
+    def write(self, text):
         self.writer.write(text)
         self.writer.flush()
+
+    def read(self):
+        return self.reader.readline()
 
     def left(self):
         print("Participant left chat.")
 
-def message(user, line):
-    print("Chat:", line.strip())
-    for other in users:
+def broadcast(message, from_user):
+    print("Chat:", message.strip())
+    for user in users:
         try:
-            if other is not user:  # Don't echo
-                other.write_line(line)
+            if user is not from_user:  # Don't echo
+                user.write(message)
         except socket.error as e:
             # ignore broken pipes, they just mean the participant
             # closed its connection already
             if e[0] != 32:
                 raise
 
-def handler(user, reader):
-    line = reader.readline()
-    while line:
-        message(user, line)
-        line = reader.readline()
+def handle(user):
+    message = user.read()
+    while message:
+        broadcast(message, user)
+        message = user.read()
     user.left()
     users.remove(writer)
 
-try:
-    print("ChatServer starting up on port %s" % PORT)
-    server = eventlet.listen(('0.0.0.0', PORT))
-    while True:
-        connection, address = server.accept()
-        user = User(connection, address)
-        users.add(user)
-        eventlet.spawn_n(handler, user, connection.makefile('r'))
-except (KeyboardInterrupt, SystemExit):
-    print("ChatServer exiting.")
+def server(port):
+    try:
+        print("ChatServer starting up on port %s" % port)
+        server = eventlet.listen(('0.0.0.0', port))
+        while True:
+            connection, address = server.accept()
+            user = User(connection, address)
+            users.add(user)
+            eventlet.spawn_n(handle, user)
+        return 0
+    except (KeyboardInterrupt, SystemExit):
+        print("ChatServer exiting.")
+        return 1
 
+def main():
+    return server(3001)
+
+if __name__ == '__main__':
+    import sys
+    sys.exit(main())
