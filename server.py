@@ -2,47 +2,48 @@ import eventlet
 from eventlet.green import socket
 
 PORT = 3001
-participants = set()
+users = set()
 
-def new_user(connection, address):
-    print("Participant joined chat.")
-    new_writer = new_connection.makefile('w')
-    new_writer.write('type your name:')
-    new_writer.flush()
-    name = new_writer.readline().strip()
-    return new_writer
+class User(object):
+    def __init__(self, connection, address):
+        print("Participant joined chat.")
+        self.writer = connection.makefile('w')
 
-def new_message(writer, line, participants):
+    def write_line(self, text):
+        self.writer.write(text)
+        self.writer.flush()
+
+    def left(self):
+        print("Participant left chat.")
+
+def message(user, line):
     print("Chat:", line.strip())
-    for p in participants:
+    for other in users:
         try:
-            if p is not writer:  # Don't echo
-                p.write(line)
-                p.flush()
+            if other is not user:  # Don't echo
+                other.write_line(line)
         except socket.error as e:
             # ignore broken pipes, they just mean the participant
             # closed its connection already
             if e[0] != 32:
                 raise
 
-def read_chat_forever(writer, reader):
+def handler(user, reader):
     line = reader.readline()
     while line:
-        new_message(writer, line, participants)
+        message(user, line)
         line = reader.readline()
-    participants.remove(writer)
-    print("Participant left chat.")
+    user.left()
+    users.remove(writer)
 
 try:
     print("ChatServer starting up on port %s" % PORT)
     server = eventlet.listen(('0.0.0.0', PORT))
     while True:
-        new_connection, address = server.accept()
-        new_writer = new_user(new_connection, address)
-        participants.add(new_writer)
-        eventlet.spawn_n(read_chat_forever,
-                         new_writer,
-                         new_connection.makefile('r'))
+        connection, address = server.accept()
+        user = User(connection, address)
+        users.add(user)
+        eventlet.spawn_n(handler, user, connection.makefile('r'))
 except (KeyboardInterrupt, SystemExit):
     print("ChatServer exiting.")
 
