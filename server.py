@@ -1,13 +1,23 @@
 import eventlet
 from eventlet.green import socket
 
-users = set()
-
+def stream(readable):
+    data = readable.read()
+    while data:
+        yield data
+        data = readable.read()
+    
 class User(object):
     def __init__(self, connection, address):
-        print("Participant joined chat.")
+        self.connection = connection
+        self.address = address
         self.writer = connection.makefile('w')
         self.reader = connection.makefile('r')
+        self.name = self.get_name()
+
+    def get_name(self):
+        self.write("Enter your name: ")
+        return self.read().strip()
 
     def write(self, text):
         self.writer.write(text)
@@ -16,37 +26,35 @@ class User(object):
     def read(self):
         return self.reader.readline()
 
-    def left(self):
-        print("Participant left chat.")
-
+users = set()
+    
 def broadcast(message, from_user):
-    print("Chat:", message.strip())
+    print(from_user.name + ":" + message.strip())
     for user in users:
         try:
             if user is not from_user:  # Don't echo
-                user.write(message)
+                user.write(from_user.name + ": " + message)
         except socket.error as e:
             # ignore broken pipes, they just mean the participant
             # closed its connection already
             if e[0] != 32:
                 raise
-
+            
 def handle(user):
-    message = user.read()
-    while message:
+    print("Participant joined chat.")
+    users.add(user)
+    for message in stream(user):
         broadcast(message, user)
-        message = user.read()
-    user.left()
     users.remove(writer)
+    print("Participant left chat.")
 
-def server(port):
+def service(port):
     try:
         print("ChatServer starting up on port %s" % port)
         server = eventlet.listen(('0.0.0.0', port))
         while True:
             connection, address = server.accept()
             user = User(connection, address)
-            users.add(user)
             eventlet.spawn_n(handle, user)
         return 0
     except (KeyboardInterrupt, SystemExit):
@@ -54,7 +62,7 @@ def server(port):
         return 1
 
 def main():
-    return server(3001)
+    return service(3001)
 
 if __name__ == '__main__':
     import sys
