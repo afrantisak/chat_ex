@@ -41,17 +41,17 @@ def broadcast(message, from_user):
                 raise
             
 def handle(user):
-    print("Participant joined chat.")
+    print("{user.name} joined chat.".format(**locals()))
     users.add(user)
     for message in stream(user):
         broadcast(message, user)
-    users.remove(writer)
-    print("Participant left chat.")
+    users.remove(user)
+    print("{user.name} left chat.".format(**locals()))
 
-def service(port):
+def service(host='0.0.0.0', port=3001):
     try:
         print("ChatServer starting up on port %s" % port)
-        server = eventlet.listen(('0.0.0.0', port))
+        server = eventlet.listen((host, port))
         while True:
             connection, address = server.accept()
             user = User(connection, address)
@@ -62,7 +62,7 @@ def service(port):
         return 1
 
 def main():
-    return service(3001)
+    return service(port=3001)
 
 if __name__ == '__main__':
     import sys
