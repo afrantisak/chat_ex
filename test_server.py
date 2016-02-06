@@ -3,26 +3,26 @@ import sys
 import time
 import Queue
 import signal
-import subprocess
-import threading
+import gevent.subprocess as subprocess
+import gevent
 import contextlib
 
+DEFAULT_DEBUG_STDOUT=False
+
 class Subprocess(object):
-    def __init__(self, command_line, shell=False, debug_stdout=False):
+    def __init__(self, command_line, shell=False, debug_stdout=DEFAULT_DEBUG_STDOUT, killsig=signal.SIGINT):
         self.command_line = command_line
         self.shell = shell
         self.debug_stdout = debug_stdout
-        self.thread = threading.Thread(target=self._run)
+        self.killsig = killsig
+        self.thread = gevent.spawn(self._run)
         self.process = None
         self.queue = Queue.Queue()
         self.stdout = ''
 
-    def start(self):
-        self.thread.start()
-
     def kill(self):
         if self.process:
-            os.killpg(os.getpgid(self.process.pid), signal.SIGKILL)
+            os.killpg(os.getpgid(self.process.pid), self.killsig)
         self.thread.join()
         
     def _run(self):
@@ -42,7 +42,7 @@ class Subprocess(object):
 
     def wait_line(self):
         while self.queue.empty():
-            time.sleep(0.1)
+            gevent.sleep(0.1)
         return self.queue.get().strip()
         
 class PythonSubprocess(Subprocess):
@@ -52,24 +52,22 @@ class PythonSubprocess(Subprocess):
         super(PythonSubprocess, self).__init__(command_line, debug_stdout=debug_stdout)
 
 @contextlib.contextmanager
-def AutoPythonSubprocess(script_path, debug_stdout=False):
+def AutoPythonSubprocess(script_path, debug_stdout=DEFAULT_DEBUG_STDOUT):
     p = PythonSubprocess(script_path, debug_stdout=debug_stdout)
-    p.start()
     yield p
     p.kill()
     
 def test_PythonSubprocess():
-    p = PythonSubprocess('server.py')
-    p.start()
-    time.sleep(0.5)
+    p = Subprocess('/usr/bin/python -u -c "for x in range(10): import time; time.sleep(1); print x"', shell=True, killsig=signal.SIGKILL)
+    gevent.sleep(2)
     p.kill()
     stdout_str = p.stdout.strip()
-    assert stdout_str == "ChatServer starting up on port 3001"
+    assert stdout_str == '0'
 
-def test_AutoPythonSubprocess():
-    with AutoPythonSubprocess('server.py') as p:
-        time.sleep(0.5)
-    assert p.stdout.strip() == "ChatServer starting up on port 3001"
+def test_zero_clients():
+    with AutoPythonSubprocess('server.py') as server:
+        assert server.wait_line() == "ChatServer starting up on port 3001"
+    assert server.stdout.strip() == "ChatServer exiting."
 
 @contextlib.contextmanager
 def simple_client(address, name):
@@ -90,10 +88,11 @@ def test_one_client():
             client.sendall("test\n")
             assert server.wait_line() == "Aaron:test"
         assert server.wait_line() == "Aaron left chat."
+    assert server.stdout.strip() == "ChatServer exiting."
 
 def test_two_clients():
     service = ('127.0.0.1', 3001)
-    with AutoPythonSubprocess('server.py', debug_stdout=False) as server:
+    with AutoPythonSubprocess('server.py') as server:
         assert server.wait_line() == "ChatServer starting up on port 3001"
         with simple_client(service, "client1") as client1, simple_client(service, "client2") as client2:
             assert server.wait_line() == "client1 joined chat."
@@ -109,7 +108,10 @@ def test_two_clients():
             
         assert server.wait_line() == "client2 left chat."
         assert server.wait_line() == "client1 left chat."
+    assert server.stdout.strip() == "ChatServer exiting."
 
-test_AutoPythonSubprocess()
+test_PythonSubprocess()
+test_zero_clients()
+test_one_client()
 test_two_clients()
 
